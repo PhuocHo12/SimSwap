@@ -1,4 +1,4 @@
-import cog
+from cog import BasePredictor, Path, Input
 import tempfile
 from pathlib import Path
 import argparse
@@ -14,32 +14,33 @@ from util.norm import SpecificNorm
 from test_wholeimage_swapmulti import _totensor
 from insightface_func.face_detect_crop_multi import Face_detect_crop as Face_detect_crop_multi
 from insightface_func.face_detect_crop_single import Face_detect_crop as Face_detect_crop_single
+import time
 
-
-class Predictor(cog.Predictor):
-    def setup(self):
+class Predictor(BasePredictor):
+    def __init__(self):
         self.transformer_Arcface = transforms.Compose([
             transforms.ToTensor(),
             transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
         ])
 
-    @cog.input("source", type=Path, help="source image")
-    @cog.input("target", type=Path, help="target image")
-    @cog.input("mode", type=str, options=['single', 'all'], default='all',
-               help="swap a single face (the one with highest confidence by face detection) or all faces in the target image")
+    # @cog.Input("source", type=Path, help="source image")
+    # @cog.Input("target", type=Path, help="target image")
+    # @cog.Input("mode", type=str, options=['single', 'all'], default='all',
+            #    help="swap a single face (the one with highest confidence by face detection) or all faces in the target image")
     def predict(self, source, target, mode='all'):
-
+        # mode: str = Input(description="swap a single face (the one with highest confidence by face detection) or all faces in the target image", default='all')
         app = Face_detect_crop_multi(name='antelope', root='./insightface_func/models')
 
         if mode == 'single':
             app = Face_detect_crop_single(name='antelope', root='./insightface_func/models')
 
-        app.prepare(ctx_id=0, det_thresh=0.6, det_size=(640, 640))
+        app.prepare(ctx_id=1, det_thresh=0.6, det_size=(640, 640))
 
         options = TestOptions()
         options.initialize()
         opt = options.parser.parse_args(["--Arc_path", 'arcface_model/arcface_checkpoint.tar', "--pic_a_path", str(source),
                                          "--pic_b_path", str(target), "--isTrain", False, "--no_simswaplogo"])
+        print(opt.crop_size)
 
         str_ids = opt.gpu_ids.split(',')
         opt.gpu_ids = []
@@ -76,26 +77,43 @@ class Predictor(cog.Predictor):
             latend_id = F.normalize(latend_id, p=2, dim=1)
 
             ############## Forward Pass ######################
+            cam = cv2.VideoCapture(target)
+            while True:
+                tik = time.time()
+                ret, frame = cam.read()
+                if not ret:
+                    break
+            # pic_b = opt.pic_b_path
+            # img_b_whole = cv2.imread(pic_b)
+                # img_b_align_crop_list, b_mat_list = app.get(img_b_whole, crop_size)
+                try:
+                    img_b_align_crop_list, b_mat_list = app.get(frame, crop_size)
+                except:
+                    cv2.imshow("result", frame)
+                    continue
+                swap_result_list = []
+                b_align_crop_tenor_list = []
 
-            pic_b = opt.pic_b_path
-            img_b_whole = cv2.imread(pic_b)
-            img_b_align_crop_list, b_mat_list = app.get(img_b_whole, crop_size)
+                for b_align_crop in img_b_align_crop_list:
+                    b_align_crop_tenor = _totensor(cv2.cvtColor(b_align_crop, cv2.COLOR_BGR2RGB))[None, ...].cuda()
 
-            swap_result_list = []
-            b_align_crop_tenor_list = []
+                    swap_result = model(None, b_align_crop_tenor, latend_id, None, True)[0]
+                    swap_result_list.append(swap_result)
+                    b_align_crop_tenor_list.append(b_align_crop_tenor)
 
-            for b_align_crop in img_b_align_crop_list:
-                b_align_crop_tenor = _totensor(cv2.cvtColor(b_align_crop, cv2.COLOR_BGR2RGB))[None, ...].cuda()
+                net = None
 
-                swap_result = model(None, b_align_crop_tenor, latend_id, None, True)[0]
-                swap_result_list.append(swap_result)
-                b_align_crop_tenor_list.append(b_align_crop_tenor)
-
-            net = None
-
-            out_path = Path(tempfile.mkdtemp()) / "output.png"
-
-            reverse2wholeimage(b_align_crop_tenor_list, swap_result_list, b_mat_list, crop_size, img_b_whole, None,
-                               str(out_path), opt.no_simswaplogo,
-                               pasring_model=net, use_mask=opt.use_mask, norm=spNorm)
-            return out_path
+                out_path = Path(tempfile.mkdtemp()) / "output.png"
+                tok = time.time()
+                # final_img = reverse2wholeimage(b_align_crop_tenor_list, swap_result_list, b_mat_list, crop_size, img_b_whole, None,
+                final_img = reverse2wholeimage(b_align_crop_tenor_list, swap_result_list, b_mat_list, crop_size, frame, None,
+                                str(out_path), opt.no_simswaplogo,
+                                pasring_model=net, use_mask=opt.use_mask, norm=spNorm)
+                fps = 1 / (tok - tik)
+                final_img = cv2.putText(final_img, 'fps: %.2f' % fps, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+                cv2.imshow("result", final_img)
+                if cv2.waitKey(1) & 0xFF == ord('q'):
+                    cv2.destroyAllWindows()
+                    cam.release()
+                    break
+                # return final_img
