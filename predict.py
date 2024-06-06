@@ -81,6 +81,7 @@ class Predictor(BasePredictor):
             while True:
                 tik = time.time()
                 ret, frame = cam.read()
+                final_img = frame
                 if not ret:
                     break
             # pic_b = opt.pic_b_path
@@ -88,32 +89,33 @@ class Predictor(BasePredictor):
                 # img_b_align_crop_list, b_mat_list = app.get(img_b_whole, crop_size)
                 try:
                     img_b_align_crop_list, b_mat_list = app.get(frame, crop_size)
-                except:
-                    cv2.imshow("result", frame)
-                    continue
-                swap_result_list = []
-                b_align_crop_tenor_list = []
+                    swap_result_list = []
+                    b_align_crop_tenor_list = []
 
-                for b_align_crop in img_b_align_crop_list:
-                    b_align_crop_tenor = _totensor(cv2.cvtColor(b_align_crop, cv2.COLOR_BGR2RGB))[None, ...].cuda()
+                    for b_align_crop in img_b_align_crop_list:
+                        b_align_crop_tenor = _totensor(cv2.cvtColor(b_align_crop, cv2.COLOR_BGR2RGB))[None, ...].cuda()
 
-                    swap_result = model(None, b_align_crop_tenor, latend_id, None, True)[0]
-                    swap_result_list.append(swap_result)
-                    b_align_crop_tenor_list.append(b_align_crop_tenor)
+                        swap_result = model(None, b_align_crop_tenor, latend_id, None, True)[0]
+                        swap_result_list.append(swap_result)
+                        b_align_crop_tenor_list.append(b_align_crop_tenor)
 
-                net = None
+                    net = None
 
-                out_path = Path(tempfile.mkdtemp()) / "output.png"
-                tok = time.time()
-                # final_img = reverse2wholeimage(b_align_crop_tenor_list, swap_result_list, b_mat_list, crop_size, img_b_whole, None,
-                final_img = reverse2wholeimage(b_align_crop_tenor_list, swap_result_list, b_mat_list, crop_size, frame, None,
-                                str(out_path), opt.no_simswaplogo,
-                                pasring_model=net, use_mask=opt.use_mask, norm=spNorm)
-                fps = 1 / (tok - tik)
-                final_img = cv2.putText(final_img, 'fps: %.2f' % fps, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
-                cv2.imshow("result", final_img)
-                if cv2.waitKey(1) & 0xFF == ord('q'):
-                    cv2.destroyAllWindows()
-                    cam.release()
-                    break
+                    out_path = Path(tempfile.mkdtemp()) / "output.png"
+                    tok = time.time()
+                    # final_img = reverse2wholeimage(b_align_crop_tenor_list, swap_result_list, b_mat_list, crop_size, img_b_whole, None,
+                    final_img = reverse2wholeimage(b_align_crop_tenor_list, swap_result_list, b_mat_list, crop_size, frame, None,
+                                    str(out_path), opt.no_simswaplogo,
+                                    pasring_model=net, use_mask=opt.use_mask, norm=spNorm)
+                    fps = 1 / (tok - tik)
+                    final_img = cv2.putText(final_img, 'fps: %.2f' % fps, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+                except Exception as e:
+                    print(e)
+                    pass
+                finally:
+                    cv2.imshow("result", final_img)
+                    if cv2.waitKey(1) & 0xFF == ord('q'):
+                        cv2.destroyAllWindows()
+                        cam.release()
+                        break
                 # return final_img
